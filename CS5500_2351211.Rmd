@@ -1,0 +1,660 @@
+---
+title: "endometrial cancer"
+author: "Nazeema"
+date: "2024-08-21"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r}
+##install.packages("dplyr")
+##install.packages("ggplot2")
+##install.packages("factoextra")
+##install.packages("cluster")
+##install.packages("tidyr")
+##install.packages("caret")
+
+
+```
+
+```{r}
+library(dplyr)
+library(ggplot2)
+library(cluster)    # For clustering
+library(factoextra) # For visualizing clusters
+library(tidyr)
+library(caret)
+```
+##1.data preparation and cleaning
+##1.1 load data
+```{r}
+## 1.1 load the data from the endometrial.csv file and inspect it
+endometrial_dataset <- read.csv("endometrial.csv")
+
+str(endometrial_dataset)
+
+##having a look at the summary statistics of the dataset before cleaning
+
+summary(endometrial_dataset)
+
+##looking at the top 10 entries of the dataset
+head(endometrial_dataset,10)
+```
+## 1.2. handling missing values
+```{r}
+
+# Calculate the sum of mutated gene counts for each patient
+endometrial_dataset$calculated_mutation_sum <- rowSums(mutation_columns, na.rm = TRUE)
+
+# Compare the calculated mutation sum with the original Mutation.Count column
+endometrial_dataset$matches <- endometrial_dataset$Mutation.Count == endometrial_dataset$calculated_mutation_sum
+
+# Identify rows with discrepancies
+discrepancies <- endometrial_dataset %>% filter(matches == FALSE)
+discrepancy_row_numbers <- which(endometrial_dataset$matches == FALSE)
+print(discrepancy_row_numbers)
+```
+
+
+##1.3. checking for duplicate entries in the column name
+
+```{r}
+# Check for duplicate column names
+duplicate_columns <- names(endometrial_cleaned)[duplicated(names(endometrial_cleaned))]
+
+# Display the duplicate columns (if any)
+if (length(duplicate_columns) > 0) {
+  print(paste("Duplicate column names found:", paste(duplicate_columns, collapse = ", ")))
+} else {
+  print("No duplicate column names found.")
+}
+```
+##1.4 cleaned data
+```{r}
+endometrial_cleaned <- endometrial_dataset[-1832,]
+View(endometrial_cleaned)
+```
+
+#2. EDA
+```{r}
+# Descriptive statistics for categorical variables
+table(endometrial_cleaned$Cancer.Type.Detailed)
+table(endometrial_cleaned$Ethnicity.Category)
+table(endometrial_cleaned$Histology)
+
+# Summary statistics for numerical variables like mutation counts
+summary(endometrial_cleaned$Mutation.Count)
+```
+##2.1Visualizing the distribution of key categorical variables using bar plots.
+```{r}
+# Bar plot for Cancer Type Detailed
+ggplot(endometrial_cleaned, aes(x = Cancer.Type.Detailed)) +
+  geom_bar(fill = "skyblue") +
+  theme_minimal() +
+  labs(title = "Distribution of Cancer Types", x = "Cancer Type Detailed", y = "Count") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Bar plot for Ethnicity Category
+ggplot(endometrial_cleaned, aes(x = Ethnicity.Category)) +
+  geom_bar(fill = "lightgreen") +
+  theme_minimal() +
+  labs(title = "Distribution of Ethnicity", x = "Ethnicity Category", y = "Count") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Bar plot for Histology
+ggplot(endometrial_cleaned, aes(x = Histology)) +
+  geom_bar(fill = "lightcoral") +
+  theme_minimal() +
+  labs(title = "Distribution of Histology", x = "Histology", y = "Count") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+
+##2.2 Investigate relationships between categorical variables
+
+##2.2.1 cancer type detailed vs Ethinicity
+
+```{r}
+
+# Group by Cancer Type and Ethnicity to calculate the count of patients within each Ethnicity
+group_ethnicity <- endometrial_cleaned %>%
+  group_by(`Ethnicity.Category`, `Cancer.Type.Detailed`) %>%
+  summarise(Count = n(), .groups = "drop")
+
+# Calculate the total number of patients within each ethnicity category
+total_patients_by_ethnicity <- group_ethnicity %>%
+  group_by(`Ethnicity.Category`) %>%
+  summarise(Total = sum(Count))
+
+# Join the total patients by ethnicity back to the main dataset
+group_ethnicity <- group_ethnicity %>%
+  left_join(total_patients_by_ethnicity, by = "Ethnicity.Category") %>%
+  mutate(Percentage = (Count / Total) * 100)  # Calculate percentage within each ethnicity category
+
+# Print the percentage data to the console
+print(group_ethnicity)
+
+# Create a bar plot to show the percentage of tumor types within each ethnicity category
+ggplot(group_ethnicity, aes(x = `Cancer.Type.Detailed`, y = Percentage, fill = `Ethnicity.Category`)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  geom_text(aes(label = paste0(round(Percentage, 1), "%")), 
+            position = position_dodge(width = 0.9), vjust = -0.5) +  # Adding percentage labels
+  labs(title = "Percentage of Tumor Types by Ethnicity (100% Within Each Ethnicity)",
+       x = "Tumor Type",
+       y = "Percentage Within Each Ethnicity Category") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  scale_fill_manual(values = c("Hispanic" = "#FF9999", "Non-Hispanic" = "#9999FF", "Unknown" = "#CCCCCC"))
+
+```
+
+###2.2.2 Distribution of Mutation Counts
+##Analyze the distribution of mutation counts. Use histograms or density plots to visualize this distribution.
+```{r}
+# Histogram of Mutation Count with proper x-axis scale
+ggplot(endometrial_cleaned, aes(x = Mutation.Count)) +
+  geom_histogram(binwidth = 5, fill = "lightblue", color = "black") +
+  theme_minimal() +
+  labs(title = "Distribution of Mutation Counts", x = "Number of different genes mutated", y = "Frequency") +
+  scale_x_continuous(breaks = seq(0, max(endometrial_cleaned$Mutation.Count, na.rm = TRUE), by = 5),
+                     limits = c(0, max(endometrial_cleaned$Mutation.Count, na.rm = TRUE)))
+```
+
+
+###2.3. Correlations and Pairwise Relationships
+
+###2.3.1 Explore pairwise relationships between numeric variables, such as mutation counts, using box plots 
+```{r}
+# Scatter plot: Mutation Count vs. Cancer Type Detailed
+ggplot(endometrial_cleaned, aes(x = Cancer.Type.Detailed, y = Mutation.Count)) +
+  geom_boxplot(fill = "lightblue") +
+  theme_minimal() +
+  labs(title = "Mutation Count by Cancer Type", x = "Cancer Type Detailed", y = "Mutation Count") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Correlation matrix for numeric variables (if applicable)
+numeric_data <- endometrial_cleaned %>%
+  select(where(is.numeric))
+
+cor_matrix <- cor(numeric_data, use = "complete.obs")
+print(cor_matrix)
+```
+
+
+## 3 Cluster Analysis
+#3.1 cluster analysis of patients profile based on histology, ethinicity and cancer type detailed, and mutation count
+
+```{r}
+
+# Select relevant columns for clustering
+endometrial_select <- endometrial_cleaned %>%
+  select(Patient.ID, Cancer.Type.Detailed, Ethnicity.Category, Histology, Mutation.Count)
+
+# Convert categorical variables to factors
+endometrial_select$Cancer.Type.Detailed <- as.factor(endometrial_select$Cancer.Type.Detailed)
+endometrial_select$Ethnicity.Category <- as.factor(endometrial_select$Ethnicity.Category)
+endometrial_select$Histology <- as.factor(endometrial_select$Histology)
+
+# One-hot encode the categorical variables
+endometrial_encod <- endometrial_select %>%
+  mutate(across(where(is.factor), as.numeric))
+
+# Scale the numeric columns (mutation count and encoded categorical variables)
+endometrial_scale <- endometrial_encod %>%
+  mutate(across(c(Mutation.Count, Cancer.Type.Detailed, Ethnicity.Category, Histology), scale))
+
+# Determine the optimal number of clusters using the elbow method
+fviz_nbclust(endometrial_scale %>% select(-Patient.ID), kmeans, method = "wss")
+
+# Set the number of clusters based on the elbow plot
+set.seed(123)
+k <- 4  # Adjust the number of clusters based on  elbow plot
+kmeans_result2 <- kmeans(endometrial_scale %>% select(-Patient.ID), centers = k, nstart = 25)
+
+# Add cluster results to the original data
+endometrial_select$Cluster <- as.factor(kmeans_result2$cluster)
+
+# Visualize the clusters
+fviz_cluster(kmeans_result2, data = endometrial_scale %>% select(-Patient.ID),
+             geom = "point",
+             ellipse.type = "norm",
+             main = "Cluster Plot of Patients Based on Histology, Ethnicity, Cancer Type, and Mutation Count")
+
+# Check the distribution of Cancer Types, Ethnicity, Histology, and Mutation Count within each cluster
+cancer_type_distribution <- table(endometrial_select$Cluster, endometrial_select$Cancer.Type.Detailed)
+ethnicity_distribution <- table(endometrial_select$Cluster, endometrial_select$Ethnicity.Category)
+histology_distribution <- table(endometrial_select$Cluster, endometrial_select$Histology)
+
+# Display the distributions
+print("Distribution of Cancer Type Detailed within clusters:")
+print(cancer_type_distribution)
+
+print("Distribution of Ethnicity Category within clusters:")
+print(ethnicity_distribution)
+
+print("Distribution of Histology within clusters:")
+print(histology_distribution)
+
+
+
+```
+
+
+
+
+## 3.2 clustering including patient ID, categorical columns, and all gene columns
+```{r}
+
+# Step 2: Select the relevant columns for clustering, including patient ID, categorical columns, and all gene columns
+# Identify the gene columns using a pattern match 
+gene_columns <- grep("^Gene:", names(endometrial_cleaned), value = TRUE)  # Gene columns
+
+# Select relevant columns including patient data, clinical information, and gene mutation data
+endometrial_select <- endometrial_cleaned %>%
+  select(Patient.ID, Cancer.Type.Detailed, Ethnicity.Category, Histology, Mutation.Count, all_of(gene_columns))
+
+# Step 3: Ensure that the clinical categorical variables are treated as factors
+endometrial_select <- endometrial_select %>%
+  mutate(across(c(Cancer.Type.Detailed, Ethnicity.Category, Histology), as.factor))
+
+# Step 4: Convert categorical variables (like Cancer Type, Ethnicity, Histology) to numeric for clustering
+# Use one-hot encoding if necessary for categorical data
+endometrial_encoded <- endometrial_select %>%
+  mutate(across(where(is.factor), as.numeric))
+
+# Step 5: Scale the numeric columns, including mutation count, the encoded categorical variables, and all gene columns
+endometrial_scaled <- endometrial_encoded %>%
+  mutate(across(c(Mutation.Count, starts_with("Gene:")), scale))
+
+# Step 6: Check that the gene columns are correctly included
+print("Gene columns included for clustering:")
+print(gene_columns)
+
+# Step 7: Determine the optimal number of clusters using the elbow method
+# Exclude Patient.ID from clustering
+fviz_nbclust(endometrial_scaled %>% select(-Patient.ID), kmeans, method = "wss")
+
+# Step 8: Perform k-means clustering
+set.seed(123)
+k <- 4  # Set the number of clusters (this can be adjusted based on elbow plot)
+kmeans_result <- kmeans(endometrial_scaled %>% select(-Patient.ID), centers = k, nstart = 25)
+
+# Step 9: Add the cluster results to the original data
+endometrial_select$Cluster <- as.factor(kmeans_result$cluster)
+
+# Step 10: Visualize the clusters using PCA to reduce dimensionality for visualization
+fviz_cluster(kmeans_result, data = endometrial_scaled %>% select(-Patient.ID),
+             geom = "point", ellipse.type = "norm",
+             main = "Cluster Plot of Patients Based on mutated Gene, Ethnicity, histology, cancer type detailed")
+
+# Step 11: Analyze the distribution of genes and clinical data across clusters
+# Summarize the number of patients with mutations in each gene across clusters
+gene_distribution <- endometrial_select %>%
+  group_by(Cluster) %>%
+  summarise(across(starts_with("Gene:"), ~ sum(. > 0, na.rm = TRUE)))  # Count patients with mutations in each gene
+
+# Print gene mutation distribution across clusters
+print("Gene mutation distribution within clusters:")
+print(as.data.frame(gene_distribution))
+
+# Step 12: Analyze the distribution of clinical features within each cluster
+# Distribution of Cancer Type, Ethnicity, and Histology within each cluster
+cancer_type_distribution <- table(endometrial_select$Cluster, endometrial_select$Cancer.Type.Detailed)
+ethnicity_distribution <- table(endometrial_select$Cluster, endometrial_select$Ethnicity.Category)
+histology_distribution <- table(endometrial_select$Cluster, endometrial_select$Histology)
+
+# Print clinical feature distributions
+print("Distribution of Cancer Type within clusters:")
+print(cancer_type_distribution)
+
+print("Distribution of Ethnicity Category within clusters:")
+print(ethnicity_distribution)
+
+print("Distribution of Histology within clusters:")
+print(histology_distribution)
+
+```
+#4. Modelling and Evaluation
+
+##4.1 classifying  the patient's cancer type based on the gene mutation 
+
+```{r}
+# Load the required libraries
+library(dplyr)
+library(readr)
+
+# Extract gene mutation columns (from column 17 to 319) and the cancer type detailed column (column 5)
+mutation_data <- endometrial_cleaned[, 17:319]  # Extract gene mutation columns
+cancer_types <- endometrial_cleaned[, 5]  # Extract cancer type detailed column
+
+# Identify and exclude non-numeric columns
+non_numeric_columns <- sapply(mutation_data, function(col) !is.numeric(as.numeric(col)))
+mutation_data_clean <- mutation_data[, !non_numeric_columns]  # Keep only numeric columns
+
+# Convert remaining columns to numeric (this should now avoid introducing NA values)
+mutation_data_clean <- mutation_data_clean %>%
+  mutate(across(everything(), ~as.numeric(.)))
+
+# Combine cancer type detailed with cleaned gene mutation data
+combined_data <- bind_cols(cancer_types, mutation_data_clean)
+
+# Rename the first column to something easier to work with
+colnames(combined_data)[1] <- "Cancer_Type_Detailed"
+
+# Calculate the sum of mutations for each gene by cancer type
+gene_mutation_summary <- combined_data %>%
+  group_by(Cancer_Type_Detailed) %>%
+  summarise(across(everything(), sum, na.rm = TRUE))
+
+# View the result: which genes are mutated in which cancer type
+print(gene_mutation_summary)
+
+```
+
+
+##4.2 Random Forest Model
+
+```{r}
+
+# Load the required libraries
+ # For machine learning functions
+library(randomForest)  # For Random Forest model
+library(readr)
+
+ #Extract gene mutation columns (from column 17 to 319) and the cancer type detailed column (column 5)
+mutation_data <- endometrial_cleaned[, 17:319]  # Extract gene mutation columns
+cancer_types <- endometrial_cleaned[, 5]  # Extract cancer type detailed column
+
+# Combine cancer type detailed with gene mutation data
+combined_data <- bind_cols(cancer_types, mutation_data)
+
+# Rename the first column to something easier to work with
+colnames(combined_data)[1] <- "Cancer_Type_Detailed"
+
+# Convert cancer type to a factor (for classification purposes)
+combined_data$Cancer_Type_Detailed <- as.factor(combined_data$Cancer_Type_Detailed)
+
+# Ensure all mutation data is numeric
+combined_data <- combined_data %>%
+  mutate(across(starts_with("Gene"), ~as.numeric(.)))
+
+# Split the data into training and testing sets (80% training, 20% testing)
+set.seed(123)  # For reproducibility
+train_index <- createDataPartition(combined_data$Cancer_Type_Detailed, p = 0.8, list = FALSE)
+train_data <- combined_data[train_index, ]
+test_data <- combined_data[-train_index, ]
+
+# Fit a Random Forest model to classify cancer types based on gene mutations
+rf_model <- randomForest(Cancer_Type_Detailed ~ ., data = train_data, importance = TRUE)
+
+# Predict the cancer types on the test set
+predictions <- predict(rf_model, test_data)
+
+# Evaluate the model's accuracy
+conf_matrix <- confusionMatrix(predictions, test_data$Cancer_Type_Detailed)
+
+# Print the confusion matrix to check model performance
+print(conf_matrix)
+
+# Optional: View the importance of each gene in predicting cancer types
+importance(rf_model)
+
+# Save the model results to a file if needed
+write.csv(data.frame(test_data$Cancer_Type_Detailed, predictions), "cancer_type_predictions.csv")
+
+```
+
+
+
+##4.3 Classify the cancer type based on Top 10 most important genes
+
+```{r}
+# Load necessary libraries
+  # For machine learning functions
+library(randomForest)  # For Random Forest model
+library(readr)
+
+
+# Extract gene mutation columns (from column 17 to 319) and the cancer type detailed column (column 5)
+mutation_data <- endometrial_cleaned[, 17:319]  # Extract gene mutation columns
+cancer_types <- endometrial_cleaned[, 5]  # Extract cancer type detailed column
+
+# Combine cancer type detailed with gene mutation data
+combined_data <- bind_cols(cancer_types, mutation_data)
+
+# Rename the first column to something easier to work with
+colnames(combined_data)[1] <- "Cancer_Type_Detailed"
+
+# Convert cancer type to a factor (for classification purposes)
+combined_data$Cancer_Type_Detailed <- as.factor(combined_data$Cancer_Type_Detailed)
+
+# Check for non-numeric values in gene columns
+non_numeric_values <- combined_data %>%
+  select(starts_with("Gene")) %>%
+  summarise_all(~ sum(!is.numeric(.)))
+
+cat("Non-numeric values in gene columns:\n")
+print(non_numeric_values)
+
+##replace with NA
+combined_data <- combined_data %>%
+  mutate(across(starts_with("Gene"), ~ as.numeric(as.character(.)), .names = "numeric_{col}"))
+
+# Replace NA values with 0 
+combined_data[is.na(combined_data)] <- 0
+
+# Get the column names of the gene mutation data
+gene_column_names <- colnames(mutation_data)
+
+# Function to get top 10 important genes for each cancer type
+get_top_genes <- function(cancer_type, data, gene_column_names) {
+  # Create a binary target variable for the specific cancer type (1 = cancer_type, 0 = other types)
+  data$Cancer_Type_Binary <- ifelse(data$Cancer_Type_Detailed == cancer_type, 1, 0)
+  
+  # Select the gene mutation columns by their names
+  gene_data <- data[, gene_column_names]
+  target <- as.factor(data$Cancer_Type_Binary)  # Convert to factor for binary classification
+  
+  # Split data into training and testing sets
+  set.seed(123)
+  train_index <- createDataPartition(target, p = 0.8, list = FALSE)
+  train_data <- gene_data[train_index, ]
+  train_target <- target[train_index]
+  test_data <- gene_data[-train_index, ]
+  test_target <- target[-train_index]
+  
+  # Check for and remove rows with missing values in train and test data
+  train_data <- train_data[complete.cases(train_data), ]
+  test_data <- test_data[complete.cases(test_data), ]
+  
+  # Train Random Forest model
+  rf_model <- randomForest(x = train_data, y = train_target, importance = TRUE)
+  
+  # Predict on test data
+  predictions <- predict(rf_model, test_data)
+  
+  # Evaluate model performance
+  confusion_mat <- confusionMatrix(predictions, test_target, positive = "1")
+  
+  # Get importance of genes
+  importance_df <- as.data.frame(importance(rf_model))
+  
+  # Rank genes by MeanDecreaseAccuracy and MeanDecreaseGini
+  importance_df$Gene <- rownames(importance_df)
+  
+  # Sort by MeanDecreaseAccuracy and take top 10 genes
+  top_genes <- importance_df %>%
+    arrange(desc(MeanDecreaseAccuracy)) %>%
+    slice(1:10)  # Get top 10 genes
+  
+  # Add the cancer type label to the top_genes table
+  top_genes <- top_genes %>%
+    mutate(Cancer_Type = cancer_type)
+  
+  # Return top genes and model performance
+  return(list(top_genes = top_genes, confusion_matrix = confusion_mat))
+}
+
+# List of unique cancer types in endometrial  dataset
+cancer_types <- unique(combined_data$Cancer_Type_Detailed)
+
+# Store results for each cancer type
+results_by_cancer_type <- list()
+
+# Loop through each cancer type and get top 10 genes and model performance
+for (cancer_type in cancer_types) {
+  cat("\nProcessing cancer type:", cancer_type, "\n")  # Show progress
+  result <- get_top_genes(cancer_type, combined_data, gene_column_names)
+  results_by_cancer_type[[cancer_type]] <- result
+}
+
+# Print top 10 genes and confusion matrix for each cancer type
+for (result in results_by_cancer_type) {
+  cat("\n======== Top 10 genes for:", result$cancer_type, "========\n")
+  print(result$top_genes)
+  
+  cat("\n======== Confusion Matrix for:", result$cancer_type, "========\n")
+  print(result$confusion_matrix)
+}
+
+```
+##4.4 Visualisation for the top 10 gene for various cancer type
+```{r}
+all_top_genes <- data.frame()
+
+# Loop through each cancer type and get top 10 genes and model performance
+for (cancer_type in cancer_types) {
+  cat("\nProcessing cancer type:", cancer_type, "\n")  # Show progress
+  result <- get_top_genes(cancer_type, combined_data, gene_column_names)
+  results_by_cancer_type[[cancer_type]] <- result
+  
+  # Combine top genes for each cancer type into the all_top_genes dataframe
+  all_top_genes <- rbind(all_top_genes, result$top_genes)
+}
+```
+
+```{r}
+# Plot only for "Uterine Serous Carcinoma/Uterine Papillary Serous Carcinoma" with pink bars
+ggplot(filter(all_top_genes, Cancer_Type == "Uterine Serous Carcinoma/Uterine Papillary Serous Carcinoma"), 
+       aes(x = reorder(Gene, MeanDecreaseAccuracy), y = MeanDecreaseAccuracy, fill = Cancer_Type)) +
+  geom_bar(stat = "identity", color = "black") +
+  coord_flip() +
+  labs(
+    title = "Top Genes by Mean Decrease Accuracy for Uterine Serous Carcinoma/Uterine Papillary Serous Carcinoma",
+    x = "Genes",
+    y = "Mean Decrease Accuracy"
+  ) +
+  scale_fill_manual(values = c("Uterine Serous Carcinoma/Uterine Papillary Serous Carcinoma" = "pink")) +  # Set the cancer type color to pink
+  theme_minimal()
+
+```
+
+
+```{r}
+# Plot only for "Uterine Mixed Endometrial Carcinoma" with yellow bars
+ggplot(filter(all_top_genes, Cancer_Type == "Uterine Mixed Endometrial Carcinoma"), 
+       aes(x = reorder(Gene, MeanDecreaseAccuracy), y = MeanDecreaseAccuracy, fill = Cancer_Type)) +
+  geom_bar(stat = "identity", color = "black") +
+  coord_flip() +
+  labs(
+    title = "Top Genes by Mean Decrease Accuracy for Uterine Mixed Endometrial Carcinoma",
+    x = "Genes",
+    y = "Mean Decrease Accuracy"
+  ) +
+  scale_fill_manual(values = c("Uterine Mixed Endometrial Carcinoma" = "yellow")) +  # Set the cancer type color to yellow
+  theme_minimal()
+
+```
+
+
+```{r}
+# Plot only for "Uterine Carcinosarcoma/Uterine Malignant Mixed Mullerian Tumor" with orange bars
+ggplot(filter(all_top_genes, Cancer_Type == "Uterine Carcinosarcoma/Uterine Malignant Mixed Mullerian Tumor"), 
+       aes(x = reorder(Gene, MeanDecreaseAccuracy), y = MeanDecreaseAccuracy, fill = Cancer_Type)) +
+  geom_bar(stat = "identity", color = "black") +
+  coord_flip() +
+  labs(
+    title = "Top Genes by Mean Decrease Accuracy for Uterine Carcinosarcoma/Uterine Malignant Mixed Mullerian Tumor",
+    x = "Genes",
+    y = "Mean Decrease Accuracy"
+  ) +
+  scale_fill_manual(values = c("Uterine Carcinosarcoma/Uterine Malignant Mixed Mullerian Tumor" = "orange")) +  # Set the cancer type color to orange
+  theme_minimal()
+
+```
+
+```{r}
+# Plot only for "Uterine Undifferentiated Carcinoma" with purple bars
+ggplot(filter(all_top_genes, Cancer_Type == "Uterine Undifferentiated Carcinoma"), 
+       aes(x = reorder(Gene, MeanDecreaseAccuracy), y = MeanDecreaseAccuracy, fill = Cancer_Type)) +
+  geom_bar(stat = "identity", color = "black") +
+  coord_flip() +
+  labs(
+    title = "Top Genes by Mean Decrease Accuracy for Uterine Undifferentiated Carcinoma",
+    x = "Genes",
+    y = "Mean Decrease Accuracy"
+  ) +
+  scale_fill_manual(values = c("Uterine Undifferentiated Carcinoma" = "purple")) +  # Set the cancer type color to purple
+  theme_minimal()
+
+```
+
+
+```{r}
+# Plot only for "Uterine Clear Cell Carcinoma" with green bars
+ggplot(filter(all_top_genes, Cancer_Type == "Uterine Clear Cell Carcinoma"), 
+       aes(x = reorder(Gene, MeanDecreaseAccuracy), y = MeanDecreaseAccuracy, fill = Cancer_Type)) +
+  geom_bar(stat = "identity", color = "black") +
+  coord_flip() +
+  labs(
+    title = "Top Genes by Mean Decrease Accuracy for Uterine Clear Cell Carcinoma",
+    x = "Genes",
+    y = "Mean Decrease Accuracy"
+  ) +
+  scale_fill_manual(values = c("Uterine Clear Cell Carcinoma" = "green")) +  # Set the cancer type color to green
+  theme_minimal()
+```
+
+
+
+```{r}
+# Plot only for "Uterine Endometrioid Carcinoma"
+ggplot(filter(all_top_genes, Cancer_Type == "Uterine Endometrioid Carcinoma"), 
+       aes(x = reorder(Gene, MeanDecreaseAccuracy), y = MeanDecreaseAccuracy, fill = Cancer_Type)) +
+  geom_bar(stat = "identity", color = "black") +
+  coord_flip() +
+  labs(
+    title = "Top Genes by Mean Decrease Accuracy for Uterine Endometrioid Carcinoma",
+    x = "Genes",
+    y = "Mean Decrease Accuracy"
+  ) +
+  theme_minimal()
+
+```
+
+```{r}
+# Plot only for "Endometrial Carcinoma" with blue bars
+ggplot(filter(all_top_genes, Cancer_Type == "Endometrial Carcinoma"), 
+       aes(x = reorder(Gene, MeanDecreaseAccuracy), y = MeanDecreaseAccuracy, fill = Cancer_Type)) +
+  geom_bar(stat = "identity", color = "black") +
+  coord_flip() +
+  labs(
+    title = "Top Genes by Mean Decrease Accuracy for Endometrial Carcinoma",
+    x = "Genes",
+    y = "Mean Decrease Accuracy"
+  ) +
+  scale_fill_manual(values = c("Endometrial Carcinoma" = "blue")) +  # Set the correct cancer type color to blue
+  theme_minimal()
+```
+
+
+
+
